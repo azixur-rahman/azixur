@@ -45,6 +45,13 @@ def main() -> int:
     text = remove_symbol(text, "CONFIG_KSU_DEBUG")
     text += "# CONFIG_KSU_DEBUG is not set\n"
     text = set_symbol(text, "CONFIG_TMPFS_XATTR", "y")
+    text = set_symbol(text, "CONFIG_KALLSYMS_ALL", "y")
+    # Kernel below 5.10: patch the syscall table instead of kprobes hooks.
+    text = set_symbol(text, "CONFIG_KSU_SYSCALL_TABLE_HOOK", "y")
+    text = remove_symbol(text, "CONFIG_KSU_KPROBES_HOOK")
+    text += "# CONFIG_KSU_KPROBES_HOOK is not set\n"
+    text = remove_symbol(text, "CONFIG_KSU_MANUAL_HOOK")
+    text += "# CONFIG_KSU_MANUAL_HOOK is not set\n"
     text = remove_symbol(text, "CONFIG_KSU_WITH_KPROBES")
 
     # RAM compression: zram is already enabled, make sure the pieces exist.
