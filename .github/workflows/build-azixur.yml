@@ -57,6 +57,10 @@ jobs:
           test -f drivers/kernelsu/core/init.c
           echo 'KernelSU-Next integrated'
 
+      - name: Adapt KernelSU-Next syscall hook to the 4.9 arm64 ABI
+        if: matrix.flavor == 'ksun'
+        run: python3 .github/scripts/patch_ksun.py
+
       - name: Enable GPS and FM radio built-in drivers
         run: python3 .github/scripts/patch_connectivity.py
 
@@ -105,6 +109,14 @@ jobs:
           grep -q '^CONFIG_TMPFS_XATTR=y' "$CFG"
           grep -q '^CONFIG_ZRAM=y' "$CFG"
           grep -E '^CONFIG_KSU|^CONFIG_MTK_COMBO_GPS|^CONFIG_MTK_FMRADIO' "$CFG"
+
+          if [ "$FLAVOR" = "ksun" ]; then
+            grep -q '^CONFIG_KSU_SYSCALL_TABLE_HOOK=y' "$CFG"
+            grep -q '^# CONFIG_KSU_MANUAL_HOOK is not set' "$CFG"
+            test -s out/drivers/kernelsu/hook/syscall_table_hook.o
+          else
+            grep -q '^CONFIG_KSU_SUSFS=y' "$CFG"
+          fi
 
           test -s out/drivers/misc/mediatek/connectivity/gps/gps_drv.o
           test -s out/drivers/misc/mediatek/connectivity/gps/stp_chrdev_gps.o
