@@ -1,4 +1,4 @@
-name: Build azixur CPH2185 CPH2179 (GPS FM KernelSU-Next)
+name: Build azixur CPH2185 CPH2179 (GPS FM BakaSU KSU-Next)
 
 on:
   workflow_dispatch:
@@ -14,6 +14,11 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor: [bakasu, ksun]
+    name: build-${{ matrix.flavor }}
 
     steps:
       - name: Checkout kernel source
@@ -26,7 +31,19 @@ jobs:
             bc bison build-essential flex gcc-aarch64-linux-gnu \
             libelf-dev libncurses5-dev libssl-dev python3 zip
 
-      - name: Integrate KernelSU-Next (legacy branch, 4.9 compatible)
+      - name: Integrate BakaSU (KernelSU + SUSFS)
+        if: matrix.flavor == 'bakasu'
+        run: |
+          set -euo pipefail
+          curl -LSs https://raw.githubusercontent.com/leonardrua/BakaSU/main/kernel/setup.sh \
+            | bash -s main
+          test -d KernelSU/kernel
+          grep -q 'kernelsu' drivers/Makefile
+          grep -q 'drivers/kernelsu/Kconfig' drivers/Kconfig
+          echo 'BakaSU integrated'
+
+      - name: Integrate KernelSU-Next (legacy branch, 4.9)
+        if: matrix.flavor == 'ksun'
         run: |
           set -euo pipefail
           git clone --depth 1 -b legacy \
@@ -44,7 +61,7 @@ jobs:
         run: python3 .github/scripts/patch_connectivity.py
 
       - name: Apply kernel configuration tweaks
-        run: python3 .github/scripts/config_tweaks.py
+        run: python3 .github/scripts/config_tweaks.py ${{ matrix.flavor }}
 
       - name: Confirm touch fix is present (stock DTBO is not touched)
         run: |
@@ -61,6 +78,7 @@ jobs:
           CROSS_COMPILE: aarch64-linux-gnu-
           ODM_WT_EDIT: "yes"
           VENDOR_EDIT: "1"
+          FLAVOR: ${{ matrix.flavor }}
         run: |
           set -euo pipefail
           make O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CPH2185_defconfig
@@ -68,20 +86,25 @@ jobs:
             AUTOCONF_H="$PWD/out/include/generated/autoconf.h" \
             Image.gz-dtb dtbs
           test -s out/arch/arm64/boot/Image.gz-dtb
-          cp out/.config azixur-config
-          cp out/System.map azixur-System.map
+          cp out/.config "azixur-${FLAVOR}-config"
+          cp out/System.map "azixur-${FLAVOR}-System.map"
           ls -lh out/arch/arm64/boot/Image.gz-dtb
 
-      - name: Verify GPS, FM, KernelSU-Next and RAM support
+      - name: Verify GPS, FM, root solution and RAM support
+        env:
+          FLAVOR: ${{ matrix.flavor }}
         run: |
           set -eux
-          grep -q '^CONFIG_MTK_COMBO_GPS=y' azixur-config
-          grep -q '^CONFIG_MTK_FMRADIO=y' azixur-config
-          grep -q '^CONFIG_MTK_FM_CHIP="MT6631_FM"' azixur-config
-          grep -q '^CONFIG_KSU=y' azixur-config
-          grep -q '^CONFIG_KPROBES=y' azixur-config
-          grep -q '^CONFIG_TMPFS_XATTR=y' azixur-config
-          grep -q '^CONFIG_ZRAM=y' azixur-config
+          CFG="azixur-${FLAVOR}-config"
+          MAP="azixur-${FLAVOR}-System.map"
+          grep -q '^CONFIG_MTK_COMBO_GPS=y' "$CFG"
+          grep -q '^CONFIG_MTK_FMRADIO=y' "$CFG"
+          grep -q '^CONFIG_MTK_FM_CHIP="MT6631_FM"' "$CFG"
+          grep -q '^CONFIG_KSU=y' "$CFG"
+          grep -q '^CONFIG_KPROBES=y' "$CFG"
+          grep -q '^CONFIG_TMPFS_XATTR=y' "$CFG"
+          grep -q '^CONFIG_ZRAM=y' "$CFG"
+          grep -E '^CONFIG_KSU|^CONFIG_MTK_COMBO_GPS|^CONFIG_MTK_FMRADIO' "$CFG"
 
           test -s out/drivers/misc/mediatek/connectivity/gps/gps_drv.o
           test -s out/drivers/misc/mediatek/connectivity/gps/stp_chrdev_gps.o
@@ -90,56 +113,75 @@ jobs:
           test -s out/drivers/misc/mediatek/connectivity/fmradio/core/fm_module.o
           test -s out/drivers/misc/mediatek/connectivity/fmradio/built-in.o
 
-          grep -q ' T mtk_wcn_stpgps_drv_init$' azixur-System.map
-          grep -q ' T mtk_wcn_fm_init$' azixur-System.map
-          test -n "$(find out/drivers/kernelsu -name '*.o' -print -quit)"
-          grep -qa 'KernelSU-Next' out/vmlinux || true
+          grep -q ' T mtk_wcn_stpgps_drv_init$' "$MAP"
+          grep -q ' T mtk_wcn_fm_init$' "$MAP"
+          test -n "$(find out/drivers -path '*kernelsu*' -name '*.o' -print -quit)"
 
       - name: Package AnyKernel zip
+        env:
+          FLAVOR: ${{ matrix.flavor }}
         run: |
           set -euo pipefail
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel
           cp out/arch/arm64/boot/Image.gz-dtb anykernel/Image.gz-dtb
           cp packaging/cph2185-anykernel.sh anykernel/anykernel.sh
-          sed -i 's/^kernel.string=.*/kernel.string=azixur Kernel (GPS+FMRadio+KSU-Next) by Azixur Rahman/' \
+          sed -i "s#^kernel.string=.*#kernel.string=azixur ${FLAVOR} Kernel (GPS+FMRadio) by Azixur Rahman#" \
             anykernel/anykernel.sh
           chmod +x anykernel/anykernel.sh
           grep -q '^do.devicecheck=0' anykernel/anykernel.sh
           test ! -e anykernel/dtbo.img
           rm -rf anykernel/.git
           cd anykernel
-          zip -r9 "../azixur-CPH2185-CPH2179-${GITHUB_SHA::12}.zip" . \
+          zip -r9 "../azixur-${FLAVOR}-CPH2185-CPH2179-${GITHUB_SHA::12}.zip" . \
             -x README.md -x '*placeholder' -x '.git/*'
           cd ..
-          sha256sum azixur-CPH2185-CPH2179-*.zip
+          sha256sum azixur-${FLAVOR}-CPH2185-CPH2179-*.zip
 
       - name: Upload build artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: azixur-CPH2185-${{ github.sha }}
+          name: azixur-${{ matrix.flavor }}-${{ github.sha }}
           path: |
-            azixur-CPH2185-CPH2179-*.zip
-            azixur-config
-            azixur-System.map
+            azixur-${{ matrix.flavor }}-CPH2185-CPH2179-*.zip
+            azixur-${{ matrix.flavor }}-config
+            azixur-${{ matrix.flavor }}-System.map
           if-no-files-found: warn
           retention-days: 14
 
+  release:
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Download both AnyKernel zips
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: azixur-*
+          merge-multiple: true
+
+      - name: List release files
+        run: ls -lh dist
+
       - name: Publish release
-        if: success()
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG="azixur-${{ github.run_number }}"
-          gh release create "$TAG" azixur-CPH2185-CPH2179-*.zip \
-            --title "azixur CPH2185/CPH2179 (GPS + FM + KernelSU-Next)" \
+          gh release create "azixur-${{ github.run_number }}" dist/*.zip \
+            --title "azixur CPH2185/CPH2179 build ${{ github.run_number }}" \
             --notes "MT6765 kernel 4.9.190-falcon-az for OPPO A15 (CPH2185) / A15s (CPH2179).
 
-          - GPS: built-in, from oppo-source A15_Q
-          - FM radio: built-in, MT6631, from oppo-source A15_Q
-          - KernelSU-Next: legacy branch integrated
-          - RAM: zram + LZ4 enabled
-          - Storage: deadline default I/O scheduler
-          - Touch: NT36525B fix included, stock DTBO partition untouched (kernel-only zip)
-          - AnyKernel3, no boot.img, no vendor writes"
+          Two flavors, flash only one:
+
+          - **bakasu** - BakaSU KernelSU with SUSFS
+          - **ksun** - KernelSU-Next legacy (syscall-table hook)
+
+          Both include:
+
+          - GPS built-in (oppo-source A15_Q)
+          - FM radio built-in, MT6631 (oppo-source A15_Q)
+          - zram + LZ4 (RAM compression)
+          - deadline default I/O scheduler
+          - NT36525B touch fix, stock DTBO partition untouched
+          - AnyKernel3, kernel only: no boot.img, no vendor writes"
