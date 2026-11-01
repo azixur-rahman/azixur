@@ -1,0 +1,145 @@
+name: Build azixur CPH2185 CPH2179 (GPS FM KernelSU-Next)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: azixur-kernel-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 150
+
+    steps:
+      - name: Checkout kernel source
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc bison build-essential flex gcc-aarch64-linux-gnu \
+            libelf-dev libncurses5-dev libssl-dev python3 zip
+
+      - name: Integrate KernelSU-Next (legacy branch, 4.9 compatible)
+        run: |
+          set -euo pipefail
+          git clone --depth 1 -b legacy \
+            https://github.com/KernelSU-Next/KernelSU-Next KernelSU-Next
+          ln -sfn ../KernelSU-Next/kernel drivers/kernelsu
+          grep -q 'kernelsu' drivers/Makefile || \
+            printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> drivers/Makefile
+          grep -q 'drivers/kernelsu/Kconfig' drivers/Kconfig || \
+            sed -i '/endmenu/i\source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+          test -f drivers/kernelsu/Kconfig
+          test -f drivers/kernelsu/core/init.c
+          echo 'KernelSU-Next integrated'
+
+      - name: Enable GPS and FM radio built-in drivers
+        run: python3 .github/scripts/patch_connectivity.py
+
+      - name: Apply kernel configuration tweaks
+        run: python3 .github/scripts/config_tweaks.py
+
+      - name: Confirm touch fix is present (stock DTBO is not touched)
+        run: |
+          if ! grep -q 'novatek,swrst-n8-addr' \
+              arch/arm64/boot/dts/mediatek/oppo6765.dts; then
+            git apply packaging/falcon-az-touch-fix.patch
+          fi
+          grep -n 'novatek,swrst-n8-addr' \
+            arch/arm64/boot/dts/mediatek/oppo6765.dts
+
+      - name: Build kernel and DTBs
+        env:
+          ARCH: arm64
+          CROSS_COMPILE: aarch64-linux-gnu-
+          ODM_WT_EDIT: "yes"
+          VENDOR_EDIT: "1"
+        run: |
+          set -euo pipefail
+          make O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CPH2185_defconfig
+          make -j"$(nproc)" O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            AUTOCONF_H="$PWD/out/include/generated/autoconf.h" \
+            Image.gz-dtb dtbs
+          test -s out/arch/arm64/boot/Image.gz-dtb
+          cp out/.config azixur-config
+          cp out/System.map azixur-System.map
+          ls -lh out/arch/arm64/boot/Image.gz-dtb
+
+      - name: Verify GPS, FM, KernelSU-Next and RAM support
+        run: |
+          set -eux
+          grep -q '^CONFIG_MTK_COMBO_GPS=y' azixur-config
+          grep -q '^CONFIG_MTK_FMRADIO=y' azixur-config
+          grep -q '^CONFIG_MTK_FM_CHIP="MT6631_FM"' azixur-config
+          grep -q '^CONFIG_KSU=y' azixur-config
+          grep -q '^CONFIG_KPROBES=y' azixur-config
+          grep -q '^CONFIG_TMPFS_XATTR=y' azixur-config
+          grep -q '^CONFIG_ZRAM=y' azixur-config
+
+          test -s out/drivers/misc/mediatek/connectivity/gps/gps_drv.o
+          test -s out/drivers/misc/mediatek/connectivity/gps/stp_chrdev_gps.o
+          test -s out/drivers/misc/mediatek/connectivity/gps/built-in.o
+          test -s out/drivers/misc/mediatek/connectivity/fmradio/fmradio_drv.o
+          test -s out/drivers/misc/mediatek/connectivity/fmradio/core/fm_module.o
+          test -s out/drivers/misc/mediatek/connectivity/fmradio/built-in.o
+
+          grep -q ' T mtk_wcn_stpgps_drv_init$' azixur-System.map
+          grep -q ' T mtk_wcn_fm_init$' azixur-System.map
+          test -n "$(find out/drivers/kernelsu -name '*.o' -print -quit)"
+          grep -qa 'KernelSU-Next' out/vmlinux || true
+
+      - name: Package AnyKernel zip
+        run: |
+          set -euo pipefail
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel
+          cp out/arch/arm64/boot/Image.gz-dtb anykernel/Image.gz-dtb
+          cp packaging/cph2185-anykernel.sh anykernel/anykernel.sh
+          sed -i 's/^kernel.string=.*/kernel.string=azixur Kernel (GPS+FMRadio+KSU-Next) by Azixur Rahman/' \
+            anykernel/anykernel.sh
+          chmod +x anykernel/anykernel.sh
+          grep -q '^do.devicecheck=0' anykernel/anykernel.sh
+          test ! -e anykernel/dtbo.img
+          rm -rf anykernel/.git
+          cd anykernel
+          zip -r9 "../azixur-CPH2185-CPH2179-${GITHUB_SHA::12}.zip" . \
+            -x README.md -x '*placeholder' -x '.git/*'
+          cd ..
+          sha256sum azixur-CPH2185-CPH2179-*.zip
+
+      - name: Upload build artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: azixur-CPH2185-${{ github.sha }}
+          path: |
+            azixur-CPH2185-CPH2179-*.zip
+            azixur-config
+            azixur-System.map
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Publish release
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="azixur-${{ github.run_number }}"
+          gh release create "$TAG" azixur-CPH2185-CPH2179-*.zip \
+            --title "azixur CPH2185/CPH2179 (GPS + FM + KernelSU-Next)" \
+            --notes "MT6765 kernel 4.9.190-falcon-az for OPPO A15 (CPH2185) / A15s (CPH2179).
+
+          - GPS: built-in, from oppo-source A15_Q
+          - FM radio: built-in, MT6631, from oppo-source A15_Q
+          - KernelSU-Next: legacy branch integrated
+          - RAM: zram + LZ4 enabled
+          - Storage: deadline default I/O scheduler
+          - Touch: NT36525B fix included, stock DTBO partition untouched (kernel-only zip)
+          - AnyKernel3, no boot.img, no vendor writes"
