@@ -17,6 +17,7 @@ import pathlib
 import sys
 
 PATH = pathlib.Path("KernelSU-Next/kernel/hook/syscall_table_hook.c")
+SYMBOL_RESOLVER = pathlib.Path("KernelSU-Next/kernel/infra/symbol_resolver.c")
 
 OLD_ERROR = """// The pt_regs-based syscall ABI (__arm64_sys_*/__x64_sys_*) exists since 4.17
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 17, 0)
@@ -225,6 +226,25 @@ def main() -> int:
 
     PATH.write_text(text)
     print("KernelSU-Next syscall table hook adapted to 4.9 arm64 ABI")
+
+    # linux/sched/signal.h appeared in 4.11.  symbol_resolver.c includes it
+    # unconditionally, so fold it into linux/sched.h on this 4.9 kernel.
+    if SYMBOL_RESOLVER.is_file():
+        src = SYMBOL_RESOLVER.read_text()
+        if "#include <linux/sched/signal.h>" in src:
+            src = src.replace(
+                "#include <linux/sched/signal.h>",
+                "#include <linux/sched.h>",
+                1,
+            )
+            SYMBOL_RESOLVER.write_text(src)
+            print("KernelSU-Next symbol_resolver.c adapted to 4.9 headers")
+        else:
+            print("KernelSU-Next symbol_resolver.c already adapted")
+    else:
+        print(f"ERROR: {SYMBOL_RESOLVER} not found")
+        return 1
+
     return 0
 
 
