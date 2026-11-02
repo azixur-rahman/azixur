@@ -483,8 +483,19 @@ mtk8250_set_termios(struct uart_port *port, struct ktermios *termios,
 
 static int __maybe_unused mtk8250_runtime_suspend(struct device *dev)
 {
-	struct mtk8250_data *data = dev_get_drvdata(dev);
-	struct uart_8250_port *up = serial8250_get_port(data->line);
+	struct mtk8250_data *data;
+	struct uart_8250_port *up;
+
+	if (!dev)
+		return -ENODEV;
+
+	data = dev_get_drvdata(dev);
+	if (!data)
+		return -ENODEV;
+
+	up = serial8250_get_port(data->line);
+	if (!up)
+		return -ENODEV;
 
 	/*wait until UART in idle status*/
 	while
@@ -502,8 +513,15 @@ static int __maybe_unused mtk8250_runtime_suspend(struct device *dev)
 
 static int __maybe_unused mtk8250_runtime_resume(struct device *dev)
 {
-	struct mtk8250_data *data = dev_get_drvdata(dev);
+	struct mtk8250_data *data;
 	int err;
+
+	if (!dev)
+		return -ENODEV;
+
+	data = dev_get_drvdata(dev);
+	if (!data)
+		return -ENODEV;
 
 	if (data->clk_count > 0U)
 		pr_debug("%s clock count is %d\n", __func__, data->clk_count);
@@ -880,11 +898,17 @@ void mtk8250_backup_dev(void)
 
 	for (line = 0; line < CONFIG_SERIAL_8250_NR_UARTS; line++) {
 		up = serial8250_get_port(line);
-		data = dev_get_drvdata(up->port.dev);
-		reg = &data->reg;
+		if (!up || !up->port.dev)
+			continue;
 
 		if (!uart_console(&up->port))
 			continue;
+
+		data = dev_get_drvdata(up->port.dev);
+		if (!data)
+			continue;
+
+		reg = &data->reg;
 
 		spin_lock_irqsave(&up->port.lock, flags);
 
@@ -939,11 +963,17 @@ void mtk8250_restore_dev(void)
 
 	for (line = 0; line < CONFIG_SERIAL_8250_NR_UARTS; line++) {
 		up = serial8250_get_port(line);
-		data = dev_get_drvdata(up->port.dev);
-		reg = &data->reg;
+		if (!up || !up->port.dev)
+			continue;
 
 		if (!uart_console(&up->port))
 			continue;
+
+		data = dev_get_drvdata(up->port.dev);
+		if (!data)
+			continue;
+
+		reg = &data->reg;
 
 		mtk8250_runtime_resume(up->port.dev);
 		pr_info("restore UART register start!\n");
