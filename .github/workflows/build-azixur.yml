@@ -171,6 +171,9 @@ jobs:
     needs: build
     runs-on: ubuntu-22.04
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Download both AnyKernel zips
         uses: actions/download-artifact@v4
         with:
@@ -184,6 +187,7 @@ jobs:
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           gh release create "azixur-${{ github.run_number }}" dist/*.zip \
