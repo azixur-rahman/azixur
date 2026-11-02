@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 """Enable GPS + FM radio as built-in drivers and make their makefiles use
-the in-tree connectivity sources instead of the vendor symlink tree."""
+the in-tree connectivity sources instead of the vendor symlink tree.
 
+NOTE: On CPH2185/CPH2179 the built-in GPS/FM drivers changed the WMT combo
+initialisation order and left both WiFi and Bluetooth dead.  They are kept
+disabled by default until that is fixed.  Set AZIXUR_ENABLE_GPS_FM=1 only
+for an experimental build."""
+
+import os
 import pathlib
 import re
 import sys
@@ -27,6 +33,10 @@ def strip_werror(text: str) -> str:
 
 
 def main() -> int:
+    if os.environ.get("AZIXUR_ENABLE_GPS_FM", "0") != "1":
+        print("GPS/FM built-in disabled for WiFi/Bluetooth stability")
+        return 0
+
     top = CONN / "Makefile"
     text = read(top)
     text = re.sub(r"^(\s*)#\s*(obj-\$\(CONFIG_MTK_COMBO_GPS\) \+= gps/)",

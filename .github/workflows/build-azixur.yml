@@ -61,7 +61,9 @@ jobs:
         if: matrix.flavor == 'ksun'
         run: python3 .github/scripts/patch_ksun.py
 
-      - name: Enable GPS and FM radio built-in drivers
+      - name: Configure GPS/FM built-in drivers (disabled for WiFi/BT safety)
+        env:
+          AZIXUR_ENABLE_GPS_FM: "0"
         run: python3 .github/scripts/patch_connectivity.py
 
       - name: Apply kernel configuration tweaks
@@ -94,16 +96,14 @@ jobs:
           cp out/System.map "azixur-${FLAVOR}-System.map"
           ls -lh out/arch/arm64/boot/Image.gz-dtb
 
-      - name: Verify GPS, FM, root solution and RAM support
+      - name: Verify connectivity, root solution and RAM support
         env:
           FLAVOR: ${{ matrix.flavor }}
+          AZIXUR_ENABLE_GPS_FM: "0"
         run: |
           set -eux
           CFG="azixur-${FLAVOR}-config"
           MAP="azixur-${FLAVOR}-System.map"
-          grep -q '^CONFIG_MTK_COMBO_GPS=y' "$CFG"
-          grep -q '^CONFIG_MTK_FMRADIO=y' "$CFG"
-          grep -q '^CONFIG_MTK_FM_CHIP="MT6631_FM"' "$CFG"
           grep -q '^CONFIG_KSU=y' "$CFG"
           grep -q '^CONFIG_KPROBES=y' "$CFG"
           grep -q '^CONFIG_TMPFS_XATTR=y' "$CFG"
@@ -124,15 +124,29 @@ jobs:
             grep -q '^CONFIG_KSU_SUSFS=y' "$CFG"
           fi
 
-          test -s out/drivers/misc/mediatek/connectivity/gps/gps_drv.o
-          test -s out/drivers/misc/mediatek/connectivity/gps/stp_chrdev_gps.o
-          test -s out/drivers/misc/mediatek/connectivity/gps/built-in.o
-          test -s out/drivers/misc/mediatek/connectivity/fmradio/fmradio_drv.o
-          test -s out/drivers/misc/mediatek/connectivity/fmradio/core/fm_module.o
-          test -s out/drivers/misc/mediatek/connectivity/fmradio/built-in.o
+          # WiFi/Bluetooth are the critical path and must be built-in.
+          grep -q ' T mtk_wcn_wmt_wifi_init$' "$MAP"
+          grep -q ' T mtk_wcn_wlan_gen4_init$' "$MAP"
+          grep -q ' T mtk_wcn_stpbt_drv_init$' "$MAP"
 
-          grep -q ' T mtk_wcn_stpgps_drv_init$' "$MAP"
-          grep -q ' T mtk_wcn_fm_init$' "$MAP"
+          if [ "${AZIXUR_ENABLE_GPS_FM}" = "1" ]; then
+            grep -q '^CONFIG_MTK_COMBO_GPS=y' "$CFG"
+            grep -q '^CONFIG_MTK_FMRADIO=y' "$CFG"
+            grep -q '^CONFIG_MTK_FM_CHIP="MT6631_FM"' "$CFG"
+            test -s out/drivers/misc/mediatek/connectivity/gps/gps_drv.o
+            test -s out/drivers/misc/mediatek/connectivity/gps/stp_chrdev_gps.o
+            test -s out/drivers/misc/mediatek/connectivity/gps/built-in.o
+            test -s out/drivers/misc/mediatek/connectivity/fmradio/fmradio_drv.o
+            test -s out/drivers/misc/mediatek/connectivity/fmradio/core/fm_module.o
+            test -s out/drivers/misc/mediatek/connectivity/fmradio/built-in.o
+            grep -q ' T mtk_wcn_stpgps_drv_init$' "$MAP"
+            grep -q ' T mtk_wcn_fm_init$' "$MAP"
+          else
+            # Keep the weak WMT stubs, exactly like the working 31 Oct kernel.
+            ! grep -q ' T mtk_wcn_stpgps_drv_init$' "$MAP"
+            ! grep -q ' T mtk_wcn_fm_init$' "$MAP"
+          fi
+
           test -n "$(find out/drivers -path '*kernelsu*' -name '*.o' -print -quit)"
 
       - name: Package AnyKernel zip
@@ -201,12 +215,15 @@ jobs:
 
           Both include:
 
-          - GPS built-in (oppo-source A15_Q)
-          - FM radio built-in, MT6631 (oppo-source A15_Q)
+          - WiFi and Bluetooth built-in (restored after the 2 Nov GPS/FM regression)
           - 8 GiB zram swap enabled automatically at boot (LZ4)
           - Virtual sound: ALSA loopback, dummy card, virtual MIDI
           - ext4 unmount use-after-free fixed (the 31 Oct poweroff)
           - panic_on_oops disabled: a bad module ioctl kills only the task
           - deadline default I/O scheduler
           - NT36525B touch fix, stock DTBO partition untouched
-          - AnyKernel3, kernel only: no boot.img, no vendor writes"
+          - GPS/FM built-in temporarily disabled: it broke WMT/WiFi/BT init
+          - AnyKernel3, kernel only: no boot.img, no vendor writes
+
+          BakaSU users: flash the **bakasu** zip. KernelSU-Next users: flash
+          the **ksun** zip. Do not flash both."
