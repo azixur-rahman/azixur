@@ -258,6 +258,17 @@ static int ipanic_die(struct notifier_block *self, unsigned long cmd, void *ptr)
 	struct die_args *dargs = (struct die_args *)ptr;
 	int fiq_step = 0;
 
+	/*
+	 * A faulty out-of-tree module must not power off the phone.  When
+	 * panic_on_oops is 0 the generic arm64 die() path kills only the
+	 * task that faulted, so keep mrdump/AEE out of the oops path.
+	 * Real panics still reach ipanic() through panic_notifier_list.
+	 */
+	if (!panic_on_oops) {
+		pr_notice("azixur: oops ignored, panic_on_oops=0 (no reboot)\n");
+		return NOTIFY_DONE;
+	}
+
 #ifdef CONFIG_MTK_RAM_CONSOLE
 	fiq_step = AEE_FIQ_STEP_KE_IPANIC_DIE;
 #endif
@@ -285,7 +296,8 @@ static int __init mrdump_panic_init(void)
 
 	atomic_notifier_chain_register(&panic_notifier_list, &panic_blk);
 	register_die_notifier(&die_blk);
-	pr_debug("ipanic: startup\n");
+	pr_info("azixur: mrdump oops guard active, panic_on_oops=%d\n",
+		panic_on_oops);
 	return 0;
 }
 

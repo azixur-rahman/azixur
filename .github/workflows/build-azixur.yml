@@ -113,6 +113,13 @@ jobs:
           grep -q '^CONFIG_SND_DUMMY=y' "$CFG"
           grep -q '^# CONFIG_PANIC_ON_OOPS is not set' "$CFG"
           grep -q '^CONFIG_PANIC_ON_OOPS_VALUE=0' "$CFG"
+          # A bad out-of-tree module oops must only kill the caller, never
+          # reset the phone: lock the sysctl and bypass mrdump's die notifier.
+          grep -q 'panic_on_oops locked to 0' kernel/sysctl.c
+          grep -q 'azixur: oops ignored, panic_on_oops=0 (no reboot)' \
+            drivers/misc/mediatek/aee/mrdump/mrdump_panic.c
+          grep -a -q 'azixur: panic_on_oops locked to 0' out/vmlinux
+          grep -a -q 'azixur: mrdump oops guard active' out/vmlinux
           grep -q '__initcall_azixur_zram_setup7' "$MAP"
           grep -E '^CONFIG_KSU|^CONFIG_MTK_COMBO_GPS|^CONFIG_MTK_FMRADIO|^CONFIG_SND_ALOOP' "$CFG"
 

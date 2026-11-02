@@ -949,7 +949,15 @@ static struct ctl_table kern_table[] = {
 		.data		= &panic_on_oops,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dointvec,
+		/*
+		 * The vendor /init.rc writes 1 here on every boot.  Clamp the
+		 * sysctl to 0 so a faulty out-of-tree module can only kill the
+		 * task that made the bad call instead of resetting the phone.
+		 * Real kernel panics still go through the panic notifier.
+		 */
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= &zero,
+		.extra2		= &zero,
 	},
 #if defined CONFIG_PRINTK
 	{
@@ -2175,6 +2183,19 @@ int __init sysctl_init(void)
 	kmemleak_not_leak(hdr);
 	return 0;
 }
+
+/*
+ * Belt and braces for the vendor init.rc write above: even if the command
+ * line asks for oops=panic, never let an out-of-tree module oops reset the
+ * phone.  A real panic still reaches the panic notifier and mrdump.
+ */
+static int __init azixur_panic_on_oops_guard(void)
+{
+	panic_on_oops = 0;
+	pr_info("azixur: panic_on_oops locked to 0\n");
+	return 0;
+}
+late_initcall(azixur_panic_on_oops_guard);
 
 #endif /* CONFIG_SYSCTL */
 
