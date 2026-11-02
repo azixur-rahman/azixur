@@ -157,7 +157,7 @@ jobs:
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel
           cp out/arch/arm64/boot/Image.gz-dtb anykernel/Image.gz-dtb
           cp packaging/cph2185-anykernel.sh anykernel/anykernel.sh
-          sed -i "s#^kernel.string=.*#kernel.string=azixur ${FLAVOR} Kernel (GPS+FMRadio) by Azixur Rahman#" \
+          sed -i "s#^kernel.string=.*#kernel.string=azixur ${FLAVOR} Kernel (WiFi/BT) by Azizur Rahman#" \
             anykernel/anykernel.sh
           chmod +x anykernel/anykernel.sh
           grep -q '^do.devicecheck=0' anykernel/anykernel.sh
