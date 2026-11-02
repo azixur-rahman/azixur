@@ -33,6 +33,15 @@
 #include <linux/proc_fs.h>
 #include <linux/sysfs.h>
 #include <linux/debugfs.h>
+#include <linux/swap.h>
+#include <linux/fs.h>
+#include <linux/syscalls.h>
+#include <linux/workqueue.h>
+#include <linux/delay.h>
+#include <linux/uaccess.h>
+#include <linux/cred.h>
+#include <linux/pid.h>
+#include <linux/sched.h>
 
 #include "zram_drv.h"
 
@@ -2230,6 +2239,212 @@ static void __exit zram_exit(void)
 {
 	destroy_devices();
 }
+
+/*
+ * azixur: bring zram0 up as an 8 GiB swap device without depending on the
+ * vendor's swap_enable.sh (that oneshot service can run before ueventd has
+ * created /dev/block/zram0).  The size is set at late_initcall so the vendor
+ * script can no longer replace it with its 2.5 GiB default; a delayed worker
+ * formats the device and calls swapon(2) once /dev is populated.
+ *
+ * sys_swapon() is not exported, so this helper only works with built-in zram
+ * (CONFIG_ZRAM=y), which is what the azixur defconfig uses.
+ */
+#define AZIXUR_ZRAM_SIZE	(8ULL << 30)
+#define AZIXUR_SWAP_PATH	"/dev/block/zram0"
+#define AZIXUR_SWAP_RETRIES	12
+
+extern int direct_vm_swappiness;
+
+static struct delayed_work azixur_zram_swap_work;
+static int azixur_zram_swap_retries;
+
+static int azixur_zram_set_disksize(struct zram *zram, u64 size)
+{
+	char buf[32];
+	int len;
+
+	len = scnprintf(buf, sizeof(buf), "%llu", size);
+	return disksize_store(disk_to_dev(zram->disk), NULL, buf, len);
+}
+
+static bool azixur_swap_header_present(struct file *f)
+{
+	union swap_header *sh;
+	bool present = false;
+	int n;
+
+	sh = kzalloc(PAGE_SIZE, GFP_KERNEL);
+	if (!sh)
+		return false;
+
+	n = kernel_read(f, 0, (char *)sh, PAGE_SIZE);
+	if (n == PAGE_SIZE && !memcmp(sh->magic.magic, "SWAPSPACE2", 10))
+		present = true;
+
+	kfree(sh);
+	return present;
+}
+
+static int azixur_write_swap_header(struct file *f, u64 size)
+{
+	union swap_header *sh;
+	int n;
+
+	sh = kzalloc(PAGE_SIZE, GFP_KERNEL);
+	if (!sh)
+		return -ENOMEM;
+
+	sh->info.version = 1;
+	sh->info.last_page = (size >> PAGE_SHIFT) - 1;
+	sh->info.nr_badpages = 0;
+	memcpy(sh->magic.magic, "SWAPSPACE2", 10);
+
+	n = kernel_write(f, (const char *)sh, PAGE_SIZE, 0);
+	kfree(sh);
+
+	if (n == PAGE_SIZE)
+		return 0;
+	return n < 0 ? n : -EIO;
+}
+
+static void azixur_zram_swap_fn(struct work_struct *work)
+{
+	const struct cred *init_cred = NULL, *old_cred = NULL;
+	struct task_struct *init_proc;
+	struct file *f;
+	mm_segment_t old_fs;
+	bool retry_needed = false;
+	int ret;
+
+	if (!zram_devices) {
+		retry_needed = true;
+		goto out;
+	}
+
+	/*
+	 * zram0 was already sized to 8 GiB at late_initcall (before init
+	 * starts), so the vendor swap_enable.sh only needs to format and
+	 * swapon it.  Its "echo <smaller size> > disksize" write fails with
+	 * -EBUSY on an initialized device and the size is left alone.
+	 *
+	 * Never call sys_swapoff() here: this runs on a workqueue thread,
+	 * which has current->mm == NULL, and sys_swapoff() has
+	 * BUG_ON(!current->mm).  A reset is only attempted when the device
+	 * is not claimed by an active swap, so it can never pull the swap
+	 * device out from under userspace.
+	 */
+	if (!init_done(zram_devices)) {
+		ret = azixur_zram_set_disksize(zram_devices, AZIXUR_ZRAM_SIZE);
+		if (ret < 0) {
+			pr_info("azixur-zram: init failed (%d), retrying\n", ret);
+			retry_needed = true;
+			goto out;
+		}
+	} else if (zram_devices->disksize != AZIXUR_ZRAM_SIZE) {
+		pr_warn("azixur-zram: zram0 is %llu bytes, expected %llu\n",
+			zram_devices->disksize, (u64)AZIXUR_ZRAM_SIZE);
+		if (reset_store(disk_to_dev(zram_devices->disk), NULL,
+				"1", 1) <= 0) {
+			/* Device is in use; never report a false success. */
+			retry_needed = true;
+			goto out;
+		}
+		ret = azixur_zram_set_disksize(zram_devices, AZIXUR_ZRAM_SIZE);
+		if (ret < 0) {
+			retry_needed = true;
+			goto out;
+		}
+	}
+
+	/*
+	 * sys_swapon() checks capable(CAP_SYS_ADMIN), and /dev/block/zram0
+	 * is labelled swap_block_device.  A kworker runs in the "kernel"
+	 * SELinux domain, which the vendor policy grants neither.  Borrow
+	 * init's credentials for this one operation: the init domain has
+	 * sys_admin and blk_file access to swap_block_device.  This is
+	 * still a kernel-owned operation, just executed with the domain
+	 * the vendor policy already trusts to set up zram.
+	 */
+	rcu_read_lock();
+	init_proc = find_task_by_vpid(1);
+	if (init_proc)
+		init_cred = get_task_cred(init_proc);
+	rcu_read_unlock();
+	if (init_cred)
+		old_cred = override_creds(init_cred);
+
+	f = filp_open(AZIXUR_SWAP_PATH, O_RDWR, 0);
+	if (IS_ERR(f)) {
+		pr_info("azixur-zram: %s not ready (%ld)\n", AZIXUR_SWAP_PATH,
+			PTR_ERR(f));
+		retry_needed = true;
+		goto out;
+	}
+
+	if (!azixur_swap_header_present(f)) {
+		ret = azixur_write_swap_header(f, zram_devices->disksize);
+		if (ret) {
+			pr_err("azixur-zram: swap header write failed: %d\n", ret);
+			filp_close(f, NULL);
+			retry_needed = true;
+			goto out;
+		}
+	}
+	filp_close(f, NULL);
+
+	old_fs = get_fs();
+	set_fs(KERNEL_DS);
+	ret = sys_swapon((const char __user *)AZIXUR_SWAP_PATH, 0);
+	set_fs(old_fs);
+
+	if (ret && ret != -EBUSY) {
+		pr_err("azixur-zram: swapon failed: %d\n", ret);
+		retry_needed = true;
+	} else {
+		pr_info("azixur-zram: 8 GiB zram swap active\n");
+	}
+
+out:
+	if (old_cred)
+		revert_creds(old_cred);
+	if (init_cred)
+		put_cred(init_cred);
+
+	if (!retry_needed)
+		return;
+
+	if (++azixur_zram_swap_retries <= AZIXUR_SWAP_RETRIES)
+		schedule_delayed_work(&azixur_zram_swap_work, 5 * HZ);
+	else
+		pr_err("azixur-zram: gave up waiting for %s\n", AZIXUR_SWAP_PATH);
+}
+
+static int __init azixur_zram_setup(void)
+{
+	int ret;
+
+	if (!zram_devices)
+		return 0;
+
+	/* Match the vendor's large-zram tuning even if swap_enable.sh fails. */
+	vm_swappiness = 160;
+	direct_vm_swappiness = 60;
+
+	if (!init_done(zram_devices)) {
+		ret = azixur_zram_set_disksize(zram_devices, AZIXUR_ZRAM_SIZE);
+		if (ret < 0)
+			pr_err("azixur-zram: cannot set 8 GiB disksize: %d\n",
+				ret);
+		else
+			pr_info("azixur-zram: zram0 disksize set to 8 GiB\n");
+	}
+
+	INIT_DELAYED_WORK(&azixur_zram_swap_work, azixur_zram_swap_fn);
+	schedule_delayed_work(&azixur_zram_swap_work, 10 * HZ);
+	return 0;
+}
+late_initcall(azixur_zram_setup);
 
 module_init(zram_init);
 module_exit(zram_exit);

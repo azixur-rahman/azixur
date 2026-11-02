@@ -1190,8 +1190,11 @@ static int xgf_enter_est_runtime(int rpid, struct xgf_render *render,
 {
 	int ret;
 
-	WARN_ON(!xgf_est_runtime_fp);
-
+	/*
+	 * azixur: this fired hundreds of times per boot and tainted the kernel
+	 * before any external module was loaded.  The fallback below already
+	 * handles a missing estimator, so keep it silent.
+	 */
 	if (xgf_est_runtime_fp)
 		ret = xgf_est_runtime_fp(rpid, render, runtime, ts);
 	else

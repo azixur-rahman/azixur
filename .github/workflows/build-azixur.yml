@@ -108,7 +108,13 @@ jobs:
           grep -q '^CONFIG_KPROBES=y' "$CFG"
           grep -q '^CONFIG_TMPFS_XATTR=y' "$CFG"
           grep -q '^CONFIG_ZRAM=y' "$CFG"
-          grep -E '^CONFIG_KSU|^CONFIG_MTK_COMBO_GPS|^CONFIG_MTK_FMRADIO' "$CFG"
+          grep -q '^CONFIG_SND_ALOOP=y' "$CFG"
+          grep -q '^CONFIG_SND_VIRMIDI=y' "$CFG"
+          grep -q '^CONFIG_SND_DUMMY=y' "$CFG"
+          grep -q '^# CONFIG_PANIC_ON_OOPS is not set' "$CFG"
+          grep -q '^CONFIG_PANIC_ON_OOPS_VALUE=0' "$CFG"
+          grep -q '__initcall_azixur_zram_setup7' "$MAP"
+          grep -E '^CONFIG_KSU|^CONFIG_MTK_COMBO_GPS|^CONFIG_MTK_FMRADIO|^CONFIG_SND_ALOOP' "$CFG"
 
           if [ "$FLAVOR" = "ksun" ]; then
             grep -q '^CONFIG_KSU_SYSCALL_TABLE_HOOK=y' "$CFG"
@@ -193,7 +199,10 @@ jobs:
 
           - GPS built-in (oppo-source A15_Q)
           - FM radio built-in, MT6631 (oppo-source A15_Q)
-          - zram + LZ4 (RAM compression)
+          - 8 GiB zram swap enabled automatically at boot (LZ4)
+          - Virtual sound: ALSA loopback, dummy card, virtual MIDI
+          - ext4 unmount use-after-free fixed (the 31 Oct poweroff)
+          - panic_on_oops disabled: a bad module ioctl kills only the task
           - deadline default I/O scheduler
           - NT36525B touch fix, stock DTBO partition untouched
           - AnyKernel3, kernel only: no boot.img, no vendor writes"

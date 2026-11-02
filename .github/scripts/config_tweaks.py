@@ -78,6 +78,18 @@ def main() -> int:
     text = set_symbol(text, "CONFIG_CRYPTO_LZ4HC", "y")
     text = set_symbol(text, "CONFIG_DEFAULT_IOSCHED", '"deadline"')
 
+    # Keep an oops from turning into a poweroff.  The vendor mrdump/panic
+    # handler is still available for real panics, but a bad module ioctl must
+    # only kill the calling task.
+    text = disable_symbol(text, "CONFIG_PANIC_ON_OOPS")
+    text = set_symbol(text, "CONFIG_PANIC_ON_OOPS_VALUE", "0")
+    text = set_symbol(text, "CONFIG_PANIC_TIMEOUT", "5")
+
+    # Virtual sound devices (ALSA loopback / virtual MIDI / dummy card).
+    text = set_symbol(text, "CONFIG_SND_ALOOP", "y")
+    text = set_symbol(text, "CONFIG_SND_VIRMIDI", "y")
+    text = set_symbol(text, "CONFIG_SND_DUMMY", "y")
+
     # Working connectivity selection.
     text = set_symbol(text, "CONFIG_MTK_COMBO_GPS", "y")
     text = set_symbol(text, "CONFIG_MTK_FMRADIO", "y")
@@ -116,6 +128,10 @@ def main() -> int:
         "CONFIG_MTK_COMBO_GPS=y",
         "CONFIG_MTK_FMRADIO=y",
         'CONFIG_MTK_FM_CHIP="MT6631_FM"',
+        "# CONFIG_PANIC_ON_OOPS is not set",
+        "CONFIG_PANIC_ON_OOPS_VALUE=0",
+        "CONFIG_SND_ALOOP=y",
+        "CONFIG_SND_VIRMIDI=y",
     ]
     if FLAVOR == "ksun":
         required.append("CONFIG_KSU_SYSCALL_TABLE_HOOK=y")

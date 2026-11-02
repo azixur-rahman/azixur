@@ -160,5 +160,41 @@ file_size() {
 
 dump_boot;
 write_boot;
+
+# KernelSU fallback for 8 GiB zram when /data is already decrypted in recovery.
+# The kernel also sets zram0 to 8 GiB and tries swapon itself; this script only
+# runs the userspace path if the kernel did not manage to activate swap.
+if [ -d /data/adb ] && [ -w /data/adb ]; then
+  mkdir -p /data/adb/service.d 2>/dev/null;
+  cat > /data/adb/service.d/azixur_zram.sh <<'AZIXUR_EOF'
+#!/system/bin/sh
+# azixur 8GB zram swap (fallback; the kernel does this at late_initcall)
+(
+  i=0
+  while [ "$(getprop sys.boot_completed)" != "1" ] && [ $i -lt 180 ]; do
+    sleep 2; i=$((i+1))
+  done
+  if [ "$(cat /sys/block/zram0/disksize 2>/dev/null)" = "8589934592" ] &&
+     grep -q "/dev/block/zram0" /proc/swaps; then
+    exit 0
+  fi
+  Z=/dev/block/zram0
+  [ -e "$Z" ] || Z=/dev/zram0
+  swapoff "$Z" 2>/dev/null
+  echo 1 > /sys/block/zram0/reset 2>/dev/null
+  echo lz4 > /sys/block/zram0/comp_algorithm 2>/dev/null
+  echo 8589934592 > /sys/block/zram0/disksize 2>/dev/null
+  mkswap "$Z" >/dev/null 2>&1
+  swapon "$Z" 2>/dev/null
+  echo 160 > /proc/sys/vm/swappiness
+  echo 60 > /proc/sys/vm/direct_swappiness
+  echo 8 > /sys/module/lowmemorykiller/parameters/almk_swap_ratio1 2>/dev/null
+  echo 6 > /sys/module/lowmemorykiller/parameters/almk_totalram_ratio 2>/dev/null
+) &
+AZIXUR_EOF
+  chmod 755 /data/adb/service.d/azixur_zram.sh 2>/dev/null;
+  ui_print "Installed 8GB zram boot helper (KernelSU).";
+fi;
+
 ui_print "Falcon-AZ kernel installed.";
 ui_print "Stock ramdisk and DTB were kept.";

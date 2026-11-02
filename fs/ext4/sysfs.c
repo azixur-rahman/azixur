@@ -562,12 +562,19 @@ int ext4_register_sysfs(struct super_block *sb)
 void ext4_unregister_sysfs(struct super_block *sb)
 {
 	struct ext4_sb_info *sbi = EXT4_SB(sb);
-	struct ext4_proc_files *p;
 
+	/*
+	 * Remove the whole per-superblock proc directory by name.  Walking
+	 * sbi->s_proc and calling remove_proc_entry() on every child is unsafe
+	 * when the superblock is torn down twice or when s_proc was corrupted:
+	 * a stale/freed proc_dir_entry turns the unmount path into a
+	 * use-after-free oops (seen in remove_proc_entry during cleanup_mnt).
+	 * remove_proc_subtree() only dereferences the global ext4_proc_root and
+	 * the superblock name, so a bad sbi->s_proc cannot crash the kernel.
+	 */
 	if (sbi->s_proc) {
-		for (p = proc_files; p->name; p++)
-			remove_proc_entry(p->name, sbi->s_proc);
-		remove_proc_entry(sb->s_id, ext4_proc_root);
+		remove_proc_subtree(sb->s_id, ext4_proc_root);
+		sbi->s_proc = NULL;
 	}
 	kobject_del(&sbi->s_kobj);
 }
