@@ -324,7 +324,6 @@ extern struct LCM_DRIVER hx83102d_hlt_psc_hdp_dsi_vdo_lcm_drv;
 extern struct LCM_DRIVER ilt9881h_inx_yogurt_hdp_dsi_vdo_lcm_drv;
 extern struct LCM_DRIVER ilt9882n_huaxian_yogurt_hdp_dsi_vdo_lcm_drv;
 extern struct LCM_DRIVER ilt9881h_ls_psc_hdp_dsi_vdo_lcm_drv;
-extern struct LCM_DRIVER nt36525b_hlt_psc_hdp_dsi_vdo_lcm_drv;
 extern struct LCM_DRIVER nt36525b_hlt_psc_boe_hdp_dsi_vdo_lcm_drv;
 extern struct LCM_DRIVER nt36525b_hlt_yogurt_hdp_dsi_vdo_lcm_drv;
 extern struct LCM_DRIVER nt36525b_hlt_two_yogurt_hdp_dsi_vdo_lcm_drv;

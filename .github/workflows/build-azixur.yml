@@ -90,11 +90,12 @@ jobs:
           make O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CPH2185_defconfig
           make -j"$(nproc)" O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
             AUTOCONF_H="$PWD/out/include/generated/autoconf.h" \
-            Image.gz-dtb dtbs
+            Image.gz Image.gz-dtb dtbs
+          test -s out/arch/arm64/boot/Image.gz
           test -s out/arch/arm64/boot/Image.gz-dtb
           cp out/.config "azixur-${FLAVOR}-config"
           cp out/System.map "azixur-${FLAVOR}-System.map"
-          ls -lh out/arch/arm64/boot/Image.gz-dtb
+          ls -lh out/arch/arm64/boot/Image.gz out/arch/arm64/boot/Image.gz-dtb
 
       - name: Verify connectivity, root solution and RAM support
         env:
@@ -136,6 +137,28 @@ jobs:
           grep -q ' T mtk_wcn_wlan_gen4_init$' "$MAP"
           grep -q ' T mtk_wcn_stpbt_drv_init$' "$MAP"
 
+          # All panel drivers used by CPH2185/CPH2179 LK must be linked.
+          # LK selects the panel at runtime from this exact list; a missing
+          # driver means a black screen even though the kernel booted.
+          for lcm in \
+            nt36525b_hlt_yogurt_hdp_dsi_vdo_lcm \
+            nt36525b_hlt_two_yogurt_hdp_dsi_vdo_lcm \
+            nt36525b_txd_yogurt_hdp_dsi_vdo_lcm \
+            ilt9881h_inx_yogurt_hdp_dsi_vdo_lcm \
+            ilt9882n_huaxian_yogurt_hdp_dsi_vdo_lcm \
+            ft8006s_txd_yogurt_hdp_dsi_vdo_lcm \
+            ilt9882n_skyworth_yogurt_hdp_dsi_vdo_lcm \
+            ilt9882n_txd_yogurt_hdp_dsi_vdo_lcm \
+            hx83102d_hlt_psc_hdp_dsi_vdo_lcm \
+            hx83102d_truly_psc_hdp_dsi_vdo_lcm \
+            ilt9881h_ls_psc_hdp_dsi_vdo_lcm \
+            nt36525b_hlt_psc_boe_hdp_dsi_vdo_lcm; do
+            grep -q " ${lcm}_drv$" "$MAP" || {
+              echo "missing LCM driver: $lcm";
+              exit 1;
+            }
+          done
+
           if [ "${AZIXUR_ENABLE_GPS_FM}" = "1" ]; then
             grep -q '^CONFIG_MTK_COMBO_GPS=y' "$CFG"
             grep -q '^CONFIG_MTK_FMRADIO=y' "$CFG"
@@ -162,6 +185,7 @@ jobs:
         run: |
           set -euo pipefail
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel
+          cp out/arch/arm64/boot/Image.gz anykernel/Image.gz
           cp out/arch/arm64/boot/Image.gz-dtb anykernel/Image.gz-dtb
           cp packaging/cph2185-anykernel.sh anykernel/anykernel.sh
           sed -i "s#^kernel.string=.*#kernel.string=azixur ${FLAVOR} Kernel (WiFi/BT) by Azizur Rahman#" \
@@ -228,7 +252,8 @@ jobs:
           - ext4 unmount use-after-free fixed (the 31 Oct poweroff)
           - panic_on_oops disabled: a bad module ioctl kills only the task
           - deadline default I/O scheduler
-          - NT36525B touch fix, stock DTBO partition untouched
+          - NT36525B touch fix, stock OPPO DTB and DTBO section preserved
+          - All CPH2185/CPH2179 LCD panel drivers compiled in (yogurt + PSC)
           - GPS/FM built-in temporarily disabled: it broke WMT/WiFi/BT init
           - AnyKernel3, kernel only: no boot.img, no vendor writes
 
