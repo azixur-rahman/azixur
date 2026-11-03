@@ -152,6 +152,8 @@ jobs:
             hx83102d_hlt_psc_hdp_dsi_vdo_lcm \
             hx83102d_truly_psc_hdp_dsi_vdo_lcm \
             ilt9881h_ls_psc_hdp_dsi_vdo_lcm \
+            ilt9881h_txd_psc_hdp_dsi_vdo_lcm \
+            nt36525b_hlt_psc_hdp_dsi_vdo_lcm \
             nt36525b_hlt_psc_boe_hdp_dsi_vdo_lcm; do
             grep -q " ${lcm}_drv$" "$MAP" || {
               echo "missing LCM driver: $lcm";
