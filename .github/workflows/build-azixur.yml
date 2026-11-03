@@ -161,6 +161,10 @@ jobs:
             }
           done
 
+          # Power-key display-resume guard: display timestamps must be linked.
+          grep -q ' azixur_disp_resume_jiffies$' "$MAP"
+          grep -q ' azixur_disp_suspend_jiffies$' "$MAP"
+
           if [ "${AZIXUR_ENABLE_GPS_FM}" = "1" ]; then
             grep -q '^CONFIG_MTK_COMBO_GPS=y' "$CFG"
             grep -q '^CONFIG_MTK_FMRADIO=y' "$CFG"

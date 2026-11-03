@@ -12,6 +12,7 @@
  */
 
 #include <linux/delay.h>
+#include <linux/jiffies.h>
 #include <linux/sched.h>
 #include <linux/semaphore.h>
 #include <linux/module.h>
@@ -4593,6 +4594,23 @@ int suspend_to_full_roi(void)
 	return ret;
 }
 
+/*
+ * Azixur: last display resume/suspend timestamps (jiffies).
+ *
+ * The MTK keypad driver uses these to drop a power-key press that would
+ * turn the panel back off immediately after a resume. Rapid off/on/off
+ * power-key cycles leave the immersive StatusBar in the window manager's
+ * "wait for drawn" list, where it can never draw; the framework then
+ * blocks the screen on for its full ~2s timeout and the user sees a black
+ * screen. Keeping the first wake press and ignoring the impatient repeats
+ * breaks that cycle. This is a timing guard only; it never powers off or
+ * reboots the phone.
+ */
+unsigned long azixur_disp_resume_jiffies;
+unsigned long azixur_disp_suspend_jiffies;
+EXPORT_SYMBOL_GPL(azixur_disp_resume_jiffies);
+EXPORT_SYMBOL_GPL(azixur_disp_suspend_jiffies);
+
 int primary_display_suspend(void)
 {
 	enum DISP_STATUS ret = DISP_STATUS_OK;
@@ -4789,6 +4807,7 @@ done:
 	primary_display_request_dvfs_perf(MMDVFS_SCEN_DISP,
 		HRT_LEVEL_DEFAULT, 0);
 #endif
+	azixur_disp_suspend_jiffies = jiffies;
 	return ret;
 }
 
@@ -5257,6 +5276,7 @@ done:
 //Wu.weihong@ODM_WT.MM.Display.Lcd, 2020/04/15, Add ffl function
 	ffl_display_ready = true;
 #endif
+	azixur_disp_resume_jiffies = jiffies;
 	return ret;
 }
 
