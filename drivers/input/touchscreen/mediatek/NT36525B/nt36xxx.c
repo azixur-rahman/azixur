@@ -1616,7 +1616,7 @@ static bool nvt_corner_point_process(int i)
     int j;
 	int flag = 0;
 	if (ts->nvt_oppo_proc_data->edge_limit.limit_00 == 0) {
-		//½Úµã/proc/touchpanel/oppo_tp_limit_enableµÄbit1Î»À´¿ØÖÆ¿ØÖÆ
+		//ï¿½Úµï¿½/proc/touchpanel/oppo_tp_limit_enableï¿½ï¿½bit1Î»ï¿½ï¿½ï¿½ï¿½ï¿½Æ¿ï¿½ï¿½ï¿½
 		if ((ts->nvt_oppo_proc_data->edge_limit.limit_lu) &&
 			(ts->nvt_oppo_proc_data->nvt_point_info[i].x < ts->nvt_oppo_proc_data->nvt_limit_area.area_xlu &&
 			ts->nvt_oppo_proc_data->nvt_point_info[i].y < ts->nvt_oppo_proc_data->nvt_limit_area.area_ylu)) {
@@ -1631,7 +1631,7 @@ static bool nvt_corner_point_process(int i)
 			flag = 1;
 
         }
-         //½Úµã/proc/touchpanel/oppo_tp_limit_enableµÄbit2Î»À´¿ØÖÆ¿ØÖÆ
+         //ï¿½Úµï¿½/proc/touchpanel/oppo_tp_limit_enableï¿½ï¿½bit2Î»ï¿½ï¿½ï¿½ï¿½ï¿½Æ¿ï¿½ï¿½ï¿½
         if ((ts->nvt_oppo_proc_data->edge_limit.limit_ru)  &&
 			(ts->nvt_oppo_proc_data->nvt_point_info[i].x > ts->nvt_oppo_proc_data->nvt_limit_area.area_xru &&
 			ts->nvt_oppo_proc_data->nvt_point_info[i].y < ts->nvt_oppo_proc_data->nvt_limit_area.area_yru)) {
@@ -1646,7 +1646,7 @@ static bool nvt_corner_point_process(int i)
 			flag = 1;
 
         }
-         //½Úµã/proc/touchpanel/oppo_tp_limit_enableµÄbit3Î»À´¿ØÖÆ¿ØÖÆ
+         //ï¿½Úµï¿½/proc/touchpanel/oppo_tp_limit_enableï¿½ï¿½bit3Î»ï¿½ï¿½ï¿½ï¿½ï¿½Æ¿ï¿½ï¿½ï¿½
        if ((ts->nvt_oppo_proc_data->edge_limit.limit_lb) &&
 	   	(ts->nvt_oppo_proc_data->nvt_point_info[i].x < ts->nvt_oppo_proc_data->nvt_limit_area.area_xlb &&
 	   	ts->nvt_oppo_proc_data->nvt_point_info[i].y > ts->nvt_oppo_proc_data->nvt_limit_area.area_ylb)) {
@@ -1661,7 +1661,7 @@ static bool nvt_corner_point_process(int i)
 			flag = 1;
 
         }
-         //½Úµã/proc/touchpanel/oppo_tp_limit_enableµÄbit4Î»À´¿ØÖÆ¿ØÖÆ
+         //ï¿½Úµï¿½/proc/touchpanel/oppo_tp_limit_enableï¿½ï¿½bit4Î»ï¿½ï¿½ï¿½ï¿½ï¿½Æ¿ï¿½ï¿½ï¿½
        if ((ts->nvt_oppo_proc_data->edge_limit.limit_rb) &&
 	   	(ts->nvt_oppo_proc_data->nvt_point_info[i].x > ts->nvt_oppo_proc_data->nvt_limit_area.area_xrb &&
 	   	ts->nvt_oppo_proc_data->nvt_point_info[i].y > ts->nvt_oppo_proc_data->nvt_limit_area.area_yrb)) {
@@ -1677,7 +1677,7 @@ static bool nvt_corner_point_process(int i)
 			flag = 1;
 
         }
-        //×ø±êµãÎª·Ç±ß½ÇÇøÓòÊ±£¬µ¯ÆðÇ°Ãæ¼ÇÂ¼µÄ±ß½Ç×ø±êµã
+        //ï¿½ï¿½ï¿½ï¿½ï¿½Îªï¿½Ç±ß½ï¿½ï¿½ï¿½ï¿½ï¿½Ê±ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ç°ï¿½ï¿½ï¿½Â¼ï¿½Ä±ß½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
         if (ts->nvt_oppo_proc_data->nvt_point_info[i].type != NVT_AREA_CORNER) {
 
             if (ts->nvt_oppo_proc_data->nvt_limit_area.which_area == NVT_AREA_CORNER) {
@@ -2118,12 +2118,17 @@ static void nvt_resume_workqueue(struct work_struct *work)
 	 */
 	if (bTouchIsAwake) {
 		ts->is_suspended = 0;
+		mutex_unlock(&ts->lock);
+		/*
+		 * Unmask outside ts->lock: the hard-IRQ handler also takes
+		 * this mutex, and a pending touch IRQ would otherwise run
+		 * while the resume path still owns it.
+		 */
 		nvt_irq_enable(1);
 #if NVT_TOUCH_ESD_PROTECT
 		queue_delayed_work(nvt_esd_check_wq, &nvt_esd_check_work,
 				msecs_to_jiffies(NVT_TOUCH_ESD_CHECK_PERIOD));
 #endif /* #if NVT_TOUCH_ESD_PROTECT */
-		mutex_unlock(&ts->lock);
 		NVT_LOG("fast resume: controller awake, IRQ enabled\n");
 		return;
 	}
@@ -3067,12 +3072,17 @@ static int32_t nvt_ts_resume(struct device *dev)
 	if (bTouchIsAwake && ts->is_suspended && !ts->gesture_enable) {
 		mutex_lock(&ts->lock);
 		ts->is_suspended = 0;
+		mutex_unlock(&ts->lock);
+		/*
+		 * Unmask outside ts->lock: the hard-IRQ handler also takes
+		 * this mutex, and a pending touch IRQ would otherwise run
+		 * while the resume path still owns it.
+		 */
 		nvt_irq_enable(1);
 #if NVT_TOUCH_ESD_PROTECT
 		queue_delayed_work(nvt_esd_check_wq, &nvt_esd_check_work,
 				msecs_to_jiffies(NVT_TOUCH_ESD_CHECK_PERIOD));
 #endif /* #if NVT_TOUCH_ESD_PROTECT */
-		mutex_unlock(&ts->lock);
 		NVT_LOG("%s: controller awake, IRQ enabled synchronously\n",
 			__func__);
 		return 0;
