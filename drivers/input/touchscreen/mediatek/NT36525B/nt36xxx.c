@@ -2102,7 +2102,7 @@ static void nvt_resume_workqueue(struct work_struct *work)
 //Bin.Su@ODM_WT.BSP.TP.FUNCTION.2019/07/04,add power on function
 //	int pwr;
 #endif
-	if (bTouchIsAwake) {
+	if (bTouchIsAwake && !ts->is_suspended) {
 		NVT_LOG("Touch is already resume\n");
 		return;
 	}
@@ -2110,6 +2110,23 @@ static void nvt_resume_workqueue(struct work_struct *work)
 	mutex_lock(&ts->lock);
 
 	NVT_LOG("start\n");
+
+	/*
+	 * Azixur: non-gesture suspend leaves the controller in normal run
+	 * mode, so there is no deep-sleep state to exit and no firmware to
+	 * re-download.  Unmask the IRQ and return immediately.
+	 */
+	if (bTouchIsAwake) {
+		ts->is_suspended = 0;
+		nvt_irq_enable(1);
+#if NVT_TOUCH_ESD_PROTECT
+		queue_delayed_work(nvt_esd_check_wq, &nvt_esd_check_work,
+				msecs_to_jiffies(NVT_TOUCH_ESD_CHECK_PERIOD));
+#endif /* #if NVT_TOUCH_ESD_PROTECT */
+		mutex_unlock(&ts->lock);
+		NVT_LOG("fast resume: controller awake, IRQ enabled\n");
+		return;
+	}
 
 	// please make sure display reset(RESX) sequence and mipi dsi cmds sent before this
 	/* The OPPO LCD callback returns before the panel power rails and DSI
@@ -2942,11 +2959,6 @@ return:
 //extern void msm_spi_pinctrl_select_deep_sleep(struct spi_master *master);
 static int32_t nvt_ts_suspend(struct device *dev)
 {
-	//uint8_t buf[4] = {0};
-#ifdef ODM_WT_EDIT
-//Bin.Su@ODM_WT.BSP.TP.FUNCTION.2019/07/04,add power on function
-//	int pwr;
-#endif
 #if MT_PROTOCOL_B
 	uint32_t i = 0;
 #endif
@@ -2954,22 +2966,19 @@ static int32_t nvt_ts_suspend(struct device *dev)
 		NVT_LOG("Touch is already suspend\n");
 		return 0;
 	}
+
 #if WAKEUP_GESTURE
-		if (ts->gesture_enable) {
-			/* Do nothing */
-		} else {
-			nvt_irq_enable(false);
-//#ifdef ODM_WT_EDIT
-#if 0
-//Bin.Su@ODM_WT.BSP.TP.FUNCTION.2019/07/04,add power on function
-			pwr = nvt_power_on(ts, false);
-			if(pwr != 0) {
-				NVT_ERR("power off fail\n");
-			}else{
-				power_flag =  0;
-			}
-#endif
-		}
+	/*
+	 * Azixur: keep the controller in normal run mode across screen-off
+	 * instead of sending the 0x11 deep-sleep command.  The old path put
+	 * the chip to sleep and then re-downloaded the whole firmware on every
+	 * resume; the first touch after wake routinely landed in that ~0.5s
+	 * window and was lost.  With the chip awake we only mask its IRQ and
+	 * unmask it synchronously when the display comes back.  Gesture wake
+	 * leaves the IRQ live and arms it as a wakeup source below.
+	 */
+	if (!ts->gesture_enable)
+		nvt_irq_enable(false);
 #else
 	nvt_irq_enable(false);
 #endif
@@ -2983,7 +2992,6 @@ static int32_t nvt_ts_suspend(struct device *dev)
 
 	NVT_LOG("start\n");
 
-	bTouchIsAwake = 0;
 	ts->is_suspended = 1;
 
 #if WAKEUP_GESTURE
@@ -2994,25 +3002,20 @@ static int32_t nvt_ts_suspend(struct device *dev)
 		NVT_CTP_SPI_WRITE(ts->client, buf, 2);*/
 		nvt_mode_change_cmd(0x13);
 		enable_irq_wake(ts->client->irq);
+		/* Gesture reports are only decoded while this is 0. */
+		bTouchIsAwake = 0;
 
 		NVT_LOG("Enabled touch wakeup gesture\n");
 	} else {
-		/*disable_irq(ts->client->irq);
-
-		---write spi command to enter "deep sleep mode"---
-		buf[0] = EVENT_MAP_HOST_CMD;
-		buf[1] = 0x11;
-		NVT_CTP_SPI_WRITE(ts->client, buf, 2);*/
-		nvt_mode_change_cmd(0x11);
-		NVT_LOG("Enabled touch deep sleep mode\n");
+		/*
+		 * Keep bTouchIsAwake = 1 and do not send 0x11.  The
+		 * controller keeps scanning with its IRQ masked, so resume
+		 * is just an IRQ unmask.
+		 */
+		NVT_LOG("Controller kept awake, IRQ masked\n");
 	}
-
 #else // WAKEUP_GESTURE
-	/*disable_irq(ts->client->irq);
-	---write spi command to enter "deep sleep mode"---
-	buf[0] = EVENT_MAP_HOST_CMD;
-	buf[1] = 0x11;
-	NVT_CTP_SPI_WRITE(ts->client, buf, 2);*/
+	bTouchIsAwake = 0;
 	nvt_mode_change_cmd(0x11);
 	NVT_LOG("Enabled touch deep sleep mode\n");
 #endif // WAKEUP_GESTURE
@@ -3054,6 +3057,26 @@ static int32_t nvt_ts_resume(struct device *dev)
 {
 	if (!ts)
 		return -ENODEV;
+
+	/*
+	 * Azixur: non-gesture screen-off keeps the controller in normal run
+	 * mode.  Unmask the IRQ synchronously here so the first swipe after
+	 * the panel comes up is delivered immediately instead of waiting for
+	 * a workqueue run and a full firmware re-download.
+	 */
+	if (bTouchIsAwake && ts->is_suspended && !ts->gesture_enable) {
+		mutex_lock(&ts->lock);
+		ts->is_suspended = 0;
+		nvt_irq_enable(1);
+#if NVT_TOUCH_ESD_PROTECT
+		queue_delayed_work(nvt_esd_check_wq, &nvt_esd_check_work,
+				msecs_to_jiffies(NVT_TOUCH_ESD_CHECK_PERIOD));
+#endif /* #if NVT_TOUCH_ESD_PROTECT */
+		mutex_unlock(&ts->lock);
+		NVT_LOG("%s: controller awake, IRQ enabled synchronously\n",
+			__func__);
+		return 0;
+	}
 
 	NVT_LOG("%s: schedule controller resume\n", __func__);
 	schedule_work(&ts->resume_work_queue);

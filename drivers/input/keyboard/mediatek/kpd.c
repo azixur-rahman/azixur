@@ -431,16 +431,6 @@ void vol_down_long_press(unsigned long pressed)
 /*****************************************/
 
 #ifdef CONFIG_KPD_PWRKEY_USE_PMIC
-extern unsigned long azixur_disp_resume_jiffies;
-extern unsigned long azixur_disp_suspend_jiffies;
-
-/*
- * Set while a power-key down/up pair is being dropped by the display-resume
- * guard, so the release event is dropped too and the input stack never sees
- * an unmatched key-up.
- */
-static int azixur_pwrkey_dropped;
-
 void kpd_pwrkey_pmic_handler(unsigned long pressed)
 {
 	kpd_print("Power Key generate, pressed=%ld\n", pressed);
@@ -450,31 +440,11 @@ void kpd_pwrkey_pmic_handler(unsigned long pressed)
 	}
 
 	/*
-	 * Azixur: the display is on (resume newer than suspend) and was
-	 * resumed less than 2.5s ago. Drop the power key instead of letting
-	 * it turn the panel straight back off. A quick off/on/off cycle puts
-	 * the immersive StatusBar into the window manager's drawn-wait list,
-	 * where it never draws and the framework holds the screen black for
-	 * its full ~2s timeout. The press that wakes the device is still
-	 * accepted because at that moment suspend is newer than resume.
+	 * Azixur: never filter power-key presses here. The previous
+	 * display-resume guard dropped real PMIC presses for 2.5s after the
+	 * panel came back on, so the user could not turn the screen off or
+	 * wake it again during quick off/on/off cycles.
 	 */
-	if (pressed) {
-		if (time_after(azixur_disp_resume_jiffies,
-			       azixur_disp_suspend_jiffies) &&
-		    time_before(jiffies,
-				azixur_disp_resume_jiffies +
-				msecs_to_jiffies(2500))) {
-			azixur_pwrkey_dropped = 1;
-			kpd_print("Power Key dropped by display-resume guard\n");
-			return;
-		}
-		azixur_pwrkey_dropped = 0;
-	} else if (azixur_pwrkey_dropped) {
-		azixur_pwrkey_dropped = 0;
-		kpd_print("Power Key release dropped by display-resume guard\n");
-		return;
-	}
-
 	kpd_pmic_pwrkey_hal(pressed);
 }
 #endif

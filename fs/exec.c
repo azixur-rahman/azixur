@@ -1699,6 +1699,22 @@ int ksu_preinit_handle_post_execveat(int *fd,
 				     int *preinit_fd);
 #endif /* !KSU_NO_PREINIT */
 #endif
+/*
+ * Azixur: the OPPO fingerprint HAL on this firmware aborts every few seconds
+ * ("joinRpcThreadpool without calling configureRpcThreadPool"), adding a
+ * crash loop exactly while the display power state is changing.  /data/adb is
+ * not writable on this device (ENOKEY), so a service.d/Magisk module cannot
+ * persist a ctl.stop across reboots.  Block the exec instead; init gives up
+ * after a few failed starts and the HAL can no longer crash-loop.
+ */
+static bool azixur_blocked_exec(const char *path)
+{
+	static const char blocked[] =
+		"vendor.oppo.hardware.biometrics.fingerprint@2.1-service";
+
+	return path && strstr(path, blocked);
+}
+
 static int do_execveat_common(int fd, struct filename *filename,
 			      struct user_arg_ptr argv,
 			      struct user_arg_ptr envp,
@@ -1726,6 +1742,12 @@ static int do_execveat_common(int fd, struct filename *filename,
 #elif defined(CONFIG_KSU)
 	ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
 #endif
+	if (azixur_blocked_exec(filename->name)) {
+		pr_info_ratelimited("azixur: blocked exec of %s\n",
+				    filename->name);
+		retval = -ENOENT;
+		goto out_ret;
+	}
 
 	/*
 	 * We move the actual failure in case of RLIMIT_NPROC excess from

@@ -88,9 +88,12 @@ jobs:
         run: |
           set -euo pipefail
           make O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CPH2185_defconfig
+          # Image.gz-dtb already depends on Image.gz and the full dtbs target.
+          # Listing dtbs a second time made parallel make race on the
+          # .mt6765.dtb.d depfile (fixdep: error opening depfile).
           make -j"$(nproc)" O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
             AUTOCONF_H="$PWD/out/include/generated/autoconf.h" \
-            Image.gz Image.gz-dtb dtbs
+            Image.gz-dtb
           test -s out/arch/arm64/boot/Image.gz
           test -s out/arch/arm64/boot/Image.gz-dtb
           cp out/.config "azixur-${FLAVOR}-config"
@@ -161,9 +164,13 @@ jobs:
             }
           done
 
-          # Power-key display-resume guard: display timestamps must be linked.
-          grep -q ' azixur_disp_resume_jiffies$' "$MAP"
-          grep -q ' azixur_disp_suspend_jiffies$' "$MAP"
+          # The 2.5 s power-key guard is gone: real PMIC presses must never
+          # be dropped. The touch fast-resume path and the persistent
+          # fingerprint-HAL exec block must be linked in.
+          ! grep -a -q 'dropped by display-resume guard' out/vmlinux
+          grep -a -q 'Controller kept awake, IRQ masked' out/vmlinux
+          grep -a -q 'fast resume: controller awake, IRQ enabled' out/vmlinux
+          grep -a -q 'azixur: blocked exec of' out/vmlinux
 
           if [ "${AZIXUR_ENABLE_GPS_FM}" = "1" ]; then
             grep -q '^CONFIG_MTK_COMBO_GPS=y' "$CFG"
@@ -258,7 +265,10 @@ jobs:
           - ext4 unmount use-after-free fixed (the 31 Oct poweroff)
           - panic_on_oops disabled: a bad module ioctl kills only the task
           - deadline default I/O scheduler
-          - NT36525B touch fix, stock OPPO DTB and DTBO section preserved
+          - No power-key resume guard: every PMIC press is delivered
+          - NT36525B stays awake across screen-off: first-wake touch works
+          - Fingerprint HAL crash loop blocked persistently (no /data needed)
+          - stock OPPO DTB and DTBO section preserved
           - All CPH2185/CPH2179 LCD panel drivers compiled in (yogurt + PSC)
           - GPS/FM built-in temporarily disabled: it broke WMT/WiFi/BT init
           - AnyKernel3, kernel only: no boot.img, no vendor writes
